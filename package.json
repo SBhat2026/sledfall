@@ -1,0 +1,14 @@
+{
+  "name": "sledfall",
+  "version": "1.0.0",
+  "description": "Open-mountain arcade sledding game (original) — localhost server, Three.js, custom physics",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "three": "^0.184.0"
+  }
+}

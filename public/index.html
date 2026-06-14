@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SLEDFALL</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  html, body { margin:0; padding:0; overflow:hidden; background:#0b1424; height:100%;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    user-select:none; -webkit-user-select:none; cursor:default; }
+  #game { position:fixed; inset:0; }
+  .hud { position:fixed; pointer-events:none; color:#fff; text-shadow:0 1px 3px rgba(0,0,30,.6); }
+
+  #speed { right:28px; bottom:24px; text-align:right; }
+  #speed .num { font-size:54px; font-weight:800; font-variant-numeric:tabular-nums; line-height:1; }
+  #speed .unit { font-size:14px; font-weight:600; opacity:.8; letter-spacing:2px; }
+
+  #score { left:28px; top:22px; font-size:22px; font-weight:700; }
+  #score small { font-size:13px; font-weight:600; opacity:.75; display:block; letter-spacing:1px; }
+
+  #alt { right:28px; top:22px; font-size:14px; font-weight:600; opacity:.85; text-align:right; }
+
+  #trick { left:50%; top:24%; transform:translateX(-50%); font-size:34px; font-weight:800;
+    opacity:0; transition:opacity .15s; text-align:center; }
+  #trick .pts { font-size:20px; font-weight:700; color:#ffd34d; display:block; }
+
+  #prompt { left:50%; bottom:18%; transform:translateX(-50%); font-size:18px; font-weight:600;
+    background:rgba(8,16,34,.55); padding:10px 18px; border-radius:10px; display:none; }
+  #prompt b { color:#8fd0ff; }
+
+  #msg { left:50%; top:38%; transform:translateX(-50%); font-size:40px; font-weight:900;
+    letter-spacing:2px; opacity:0; transition:opacity .2s; color:#ff6b5e; }
+
+  #help { left:28px; bottom:22px; font-size:12.5px; line-height:1.75; opacity:.85;
+    background:rgba(8,16,34,.45); padding:10px 14px; border-radius:10px; }
+  #help b { color:#8fd0ff; font-weight:700; }
+
+  #title { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; background:radial-gradient(ellipse at 50% 35%, #1d3a66 0%, #0b1424 75%);
+    color:#fff; z-index:10; cursor:pointer; }
+  #title h1 { font-size:84px; margin:0; font-weight:900; letter-spacing:10px;
+    background:linear-gradient(180deg,#fff,#9cc8ff); -webkit-background-clip:text;
+    background-clip:text; -webkit-text-fill-color:transparent; }
+  #title p { font-size:16px; opacity:.85; margin:10px 0 0; }
+  #title .start { margin-top:42px; font-size:20px; font-weight:700; padding:14px 44px;
+    border:2px solid #8fd0ff; border-radius:12px; color:#dff0ff; animation:pulse 1.6s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.55} }
+  #title .keys { margin-top:34px; font-size:13px; opacity:.7; line-height:2; text-align:center; }
+
+  #fade { position:fixed; inset:0; background:#fff; opacity:0; pointer-events:none;
+    transition:opacity .5s; z-index:9; }
+
+  #vig { position:fixed; inset:0; pointer-events:none; opacity:0; z-index:5;
+    background:radial-gradient(ellipse at center, transparent 52%, rgba(8,16,40,.42) 100%); }
+
+  /* ---- sled shop ---- */
+  #shop { position:fixed; inset:0; display:none; flex-direction:column; align-items:center;
+    justify-content:center; background:rgba(6,12,26,.82); z-index:8; color:#fff; }
+  #shop header { display:flex; align-items:baseline; gap:18px; margin-bottom:22px; }
+  #shop header h2 { font-size:32px; font-weight:900; letter-spacing:4px; margin:0; }
+  #shop header .pts { font-size:17px; font-weight:700; color:#ffd34d; }
+  #shopCards { display:flex; gap:16px; flex-wrap:wrap; justify-content:center; max-width:1100px; }
+  .shop-card { width:185px; background:rgba(20,34,60,.92); border:2px solid rgba(143,208,255,.25);
+    border-radius:14px; padding:14px 16px; cursor:pointer; transition:transform .12s, border-color .12s; }
+  .shop-card:hover { transform:translateY(-4px); border-color:#8fd0ff; }
+  .shop-card.equipped { border-color:#ffd34d; }
+  .shop-card.locked { opacity:.55; cursor:default; }
+  .shop-card.locked:hover { transform:none; border-color:rgba(143,208,255,.25); }
+  .shop-card h3 { font-size:15.5px; margin:10px 0 4px; }
+  .shop-card p { font-size:11.5px; opacity:.75; margin:0 0 10px; min-height:28px; line-height:1.4; }
+  .shop-card .bar { display:flex; align-items:center; gap:6px; margin:3px 0; }
+  .shop-card .bar span { font-size:9.5px; font-weight:700; opacity:.7; width:34px; letter-spacing:.5px; }
+  .shop-card .track { flex:1; height:5px; background:rgba(255,255,255,.12); border-radius:3px; }
+  .shop-card .fill { height:100%; background:#8fd0ff; border-radius:3px; }
+  .shop-card .action { margin-top:12px; text-align:center; font-size:13px; font-weight:800;
+    letter-spacing:1px; padding:7px 0; border-radius:8px; background:rgba(143,208,255,.16); color:#8fd0ff; }
+  .shop-card.equipped .action { background:rgba(255,211,77,.18); color:#ffd34d; }
+  .shop-card.locked .action { color:#aab6c8; background:rgba(255,255,255,.06); }
+  .swatch { height:46px; border-radius:9px; }
+  .swatch { display:flex; align-items:center; justify-content:center; }
+  .swatch::after { content:''; width:38px; height:38px; border-radius:50%;
+    border:3px solid rgba(255,255,255,.35); box-shadow:inset 0 -4px 8px rgba(0,0,20,.3); }
+  .swatch-classic { background:rgba(20,34,60,.5); } .swatch-classic::after { background:#2f6fd6; }
+  .swatch-crimson { background:rgba(20,34,60,.5); } .swatch-crimson::after { background:#d6452f; }
+  .swatch-ice { background:rgba(20,34,60,.5); } .swatch-ice::after { background:#aadcf5; }
+  .swatch-carbon { background:rgba(20,34,60,.5); } .swatch-carbon::after { background:#2c333c; border-color:#32d6c3; }
+  .swatch-royal { background:rgba(20,34,60,.5); } .swatch-royal::after { background:#e6bb45; }
+  #shopClose { margin-top:24px; font-size:13px; font-weight:700; color:#dff0ff; cursor:pointer;
+    border:1.5px solid #8fd0ff; border-radius:9px; padding:8px 26px; background:none; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="title">
+  <h1>SLEDFALL</h1>
+  <p>an open-mountain sledding game</p>
+  <div class="start">CLICK TO RIDE</div>
+  <div class="keys">
+    A/D — steer &nbsp;·&nbsp; W — push / tuck &nbsp;·&nbsp; S — brake &nbsp;·&nbsp; hit boosters &amp; ramps with speed to fly<br>
+    On foot: LMB — snowball &nbsp;·&nbsp; Shift — sprint &nbsp;·&nbsp; G — build a kicker<br>
+    Mouse — look &nbsp;·&nbsp; E — on / off sled &nbsp;·&nbsp; walk to the cabin &amp; press F — shop &nbsp;·&nbsp; R — set respawn &nbsp;·&nbsp; T — go to respawn
+  </div>
+</div>
+
+<div id="fade"></div>
+<div id="vig"></div>
+
+<div class="hud" id="speed"><div class="num">0</div><div class="unit">M/S</div></div>
+<div class="hud" id="score"><small>SCORE</small><span id="scoreNum">0</span></div>
+<div class="hud" id="alt">DROP&nbsp;<span id="altNum">0</span>m</div>
+<div class="hud" id="trick"><span id="trickName"></span><span class="pts" id="trickPts"></span></div>
+<div class="hud" id="prompt"></div>
+<div class="hud" id="msg"></div>
+<div class="hud" id="help">
+  <b>A/D</b> steer (spin in air) · <b>W</b> push / hold to tuck (flip in air) · <b>S</b> brake<br>
+  on foot: <b>LMB</b> snowball · <b>Shift</b> sprint · <b>G</b> build kicker<br>
+  <b>E</b> on/off sled · <b>F</b> shop (at the cabin) · <b>C</b> swap rider · <b>R</b> set respawn · <b>T</b> go to respawn · <b>H</b> hide help
+</div>
+
+<div id="shop">
+  <header><h2>SLED SHOP</h2><div class="pts"><span id="shopPoints">0</span> PTS</div></header>
+  <div id="shopCards"></div>
+  <button id="shopClose">CLOSE&nbsp;(B)</button>
+</div>
+
+<script type="importmap">
+  { "imports": { "three": "/vendor/three.module.js" } }
+</script>
+<script type="module" src="/main.js"></script>
+</body>
+</html>
