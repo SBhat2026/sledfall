@@ -132,11 +132,46 @@ function biomeAt(x, z) {
   if (glacierField(x, z) > 0.74) return 'glacier';
   return forestField(x, z) < 0.36 ? 'open' : 'forest';
 }
-// surface the sled rides: groomed run, slick glacier ice, or deep powder.
+// frozen ponds: rare flat ice discs tucked off the runs — glassy landmarks
+// you can skate across. cached on a sparse lattice.
+const POND_CELL = 260;
+const pondCache = new Map();
+function pondAt(ax, az) {
+  const key = ax + ',' + az;
+  let p = pondCache.get(key);
+  if (p !== undefined) return p;
+  if (hash2(ax * 17 + 5, az * 31 + 9) > 0.16) { pondCache.set(key, null); return null; }
+  const bx = (ax + 0.3 + 0.4 * hash2(ax, az)) * POND_CELL;
+  const bz = (az + 0.3 + 0.4 * hash2(az + 4, ax + 2)) * POND_CELL;
+  if (Math.abs(nearestRun(bx, bz).dx) < 55) { pondCache.set(key, null); return null; }
+  // only on gentle ground — flattening a steep spot makes a launch-ramp edge
+  const e = 5;
+  const gx = (baseHeight(bx + e, bz) - baseHeight(bx - e, bz)) / (2 * e);
+  const gz = (baseHeight(bx, bz + e) - baseHeight(bx, bz - e)) / (2 * e);
+  if (Math.hypot(gx, gz) > 0.18) { pondCache.set(key, null); return null; }
+  p = { bx, bz, r: 15 + hash2(ax + 3, az + 7) * 13, level: baseHeight(bx, bz) - 0.8 };
+  pondCache.set(key, p);
+  return p;
+}
+function pondInfluence(x, z) {
+  const cx = Math.floor(x / POND_CELL), cz = Math.floor(z / POND_CELL);
+  let best = 0, level = 0;
+  for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
+    const p = pondAt(cx + i, cz + j);
+    if (!p) continue;
+    const d = Math.hypot(x - p.bx, z - p.bz);
+    if (d > p.r) continue;
+    const f = 1 - sstep(0.45, 1, d / p.r); // gentle shore so the edge isn't a ramp
+    if (f > best) { best = f; level = p.level; }
+  }
+  return best > 0 ? { f: best, level } : null;
+}
+
+// surface the sled rides: groomed run, slick ice (glacier or pond), or powder.
 // returns grip / drag multipliers + a label for effects.
 export function surfaceAt(x, z) {
   if (trailFactor(x, z) > 0.45) return { kind: 'groomed', grip: 1.0, drag: 0.95 };
-  if (glacierField(x, z) > 0.72) return { kind: 'ice', grip: 0.34, drag: 0.7 };
+  if (glacierField(x, z) > 0.72 || pondInfluence(x, z)) return { kind: 'ice', grip: 0.34, drag: 0.7 };
   return { kind: 'powder', grip: 1.12, drag: 1.32 };
 }
 
@@ -199,9 +234,13 @@ export function terrainHeight(x, z) {
     }
   }
 
+  // frozen ponds: flatten to a glassy ice level
+  const pond = pondInfluence(x, z);
+  if (pond) y = y * (1 - pond.f) + pond.level * pond.f;
+
   const tf = 1 - sstep(5, 17, adx);
-  // glaciers read as smooth glassy ice — flatten chatter + moguls there
-  const ice = glacierMask(x, z);
+  // glaciers + ponds read as smooth glassy ice — flatten chatter + moguls
+  const ice = Math.max(glacierMask(x, z), pond ? pond.f : 0);
   const rough = (1 - tf * 0.9) * (1 - ice * 0.92); // groomed run & ice = smooth
 
   // surface chatter
@@ -540,7 +579,8 @@ export class Terrain {
       terrainNormal(wx, wz, nv);
       nor.setXYZ(i, nv.x, nv.y, nv.z);
       const tf = trailFactor(wx, wz);
-      const ice = glacierMask(wx, wz);
+      const pondI = pondInfluence(wx, wz);
+      const ice = Math.max(glacierMask(wx, wz), pondI ? pondI.f : 0);
       // soft slope shading: flats stay bright, steeper faces cool + darken a
       // touch so the terrain reads with form (stylised, no textures)
       const shade = 1 - (1 - nv.y) * 0.28;
@@ -581,6 +621,19 @@ export class Terrain {
         this._stamp(verts, cols, nors, NATURE.stump, LODGE.x - 11, terrainHeight(LODGE.x - 11, LODGE.z + 4), LODGE.z + 4, 1.8, 2.2);
       }
       obstacles.push({ x: LODGE.x, z: LODGE.z, r: 8.6, kind: 'cabin' });
+
+      // a little village: a few smaller cabins clustered around the lodge
+      const village = [[-22, -6, 1.1], [-18, 16, 0.9], [16, -18, 1.0], [24, 10, 0.85]];
+      for (const [vx, vz, vs] of village) {
+        const wx = LODGE.x + vx, wz = LODGE.z + vz;
+        if ((wx - SPAWN.x) ** 2 + (wz - SPAWN.z) ** 2 < 12 * 12) continue; // clear of spawn
+        const wy = terrainHeight(wx, wz);
+        const vyaw = Math.atan2(LODGE.x - wx, LODGE.z - wz); // face the lodge
+        this._stamp(verts, cols, nors, TEMPLATES.cabinBody, wx, wy, wz, vs, vyaw);
+        this._stamp(verts, cols, nors, TEMPLATES.cabinRoof, wx, wy, wz, vs, vyaw + Math.PI / 4);
+        this._stamp(verts, cols, nors, TEMPLATES.cabinDoor, wx, wy, wz, vs, vyaw);
+        obstacles.push({ x: wx, z: wz, r: 3.4 * vs, kind: 'cabin' });
+      }
     }
 
     // boost pads on the run (in front of trail kickers / on empty stretches)

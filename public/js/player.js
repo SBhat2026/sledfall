@@ -18,7 +18,8 @@ const POP_MAX = 0.12;           // max momentum bonus off a lip (subtle, but sti
 const LAND_RECOVER = 0.5;       // fraction of landing impact returned on slope-matched landings
 const WALK_SPEED = 4.4;
 const SPRINT_MULT = 2.0;        // Shift while walking → sprint
-const WALL_NY = 0.5;            // ground normal.y below this = a wall, not rideable ground
+const BODY_CLEAR = 0.05;        // sit the sled this far proud of the surface
+const MAX_SPEED = 44;           // hard top speed — riding a cliff stays fast, not silly
 
 const _n = new THREE.Vector3();
 const _v = new THREE.Vector3();
@@ -238,6 +239,10 @@ export class Player {
     // quadratic drag → terminal velocity (better sleds = lower drag)
     const v = this.speed();
     if (v > 0.01) this.vel.addScaledVector(this.vel, -DRAG_K * this.stats.drag * surf.drag * (tucking ? TUCK_DRAG : 1) * v * dt);
+    // soft top-speed cap: gravity still drives you to the cap on any slope, but
+    // a near-vertical face can't run the speed away to something that feels broken
+    const vc = this.speed();
+    if (vc > MAX_SPEED) this.vel.multiplyScalar(MAX_SPEED / vc);
 
     // integrate + ground constraint (world is infinite — no bounds)
     this.pos.addScaledVector(this.vel, dt);
@@ -264,23 +269,6 @@ export class Player {
         }
       }
       this._goAirborne(); // ground fell away (lip, drop)
-    }
-
-    // wall guard: the hitbox follows the surface the sled is actually on, not
-    // world-up. a face too steep to be ground (normal.y < WALL_NY) is treated
-    // as a side wall — kill the into-wall velocity and ease the sled back out,
-    // so you slide along walls instead of clipping through them
-    if (this.grounded) {
-      const wn = t.normal(this.pos.x, this.pos.z, _n);
-      if (wn.y < WALL_NY) {
-        const wl = Math.hypot(wn.x, wn.z) || 1;
-        const hx = wn.x / wl, hz = wn.z / wl;       // horizontal "out of wall" dir
-        const into = this.vel.x * hx + this.vel.z * hz;
-        if (into < 0) { this.vel.x -= into * hx; this.vel.z -= into * hz; }
-        this.pos.x += hx * 0.05;                    // nudge clear of the wall face
-        this.pos.z += hz * 0.05;
-        this.pos.y = t.height(this.pos.x, this.pos.z);
-      }
     }
 
     // boost pads: a hard shove down the pad's arrow
@@ -315,6 +303,11 @@ export class Player {
     this.prevPos.copy(this.pos);
     this.airTime += dt;
     this.vel.y -= G * dt;
+    // mild air drag: subtle on a normal jump, but caps any launch-chain
+    // runaway so speed can't blow up off freak terrain
+    const av = this.vel.length();
+    if (av > 0.01) this.vel.addScaledVector(this.vel, -DRAG_K * 0.4 * av * dt);
+    if (av > MAX_SPEED * 1.15) this.vel.multiplyScalar((MAX_SPEED * 1.15) / av);
     this.pos.addScaledVector(this.vel, dt);
 
     // tricks: flips (W/S) + spins (A/D)
@@ -564,11 +557,14 @@ export class Player {
       this.visCushion = Math.max(0, (this.visCushion || 0) - dt * 1.6);
       this.root.position.y -= this.visCushion;
 
-      // terrain-aligned orientation, smoothed
+      // terrain-aligned orientation. snap quickly to the ground normal so the
+      // sled lies flush on any slope/wall (laggy smoothing was what let the
+      // uphill edge dig into steep faces); ease gently back toward up in the air
       const n = this.grounded
         ? t.normal(this.pos.x, this.pos.z, _n)
         : _n.set(0, 1, 0);
-      this.smoothNormal.lerp(n, 1 - Math.pow(0.0005, dt)).normalize();
+      const nLerp = this.grounded ? Math.min(1, dt * 16) : 1 - Math.pow(0.02, dt);
+      this.smoothNormal.lerp(n, nLerp).normalize();
 
       if (this.state === 'air') {
         // free rotation for tricks
@@ -601,6 +597,20 @@ export class Player {
         this.rigMount.position.set(0, 0.14, 0.05); // seated in the saucer dish
         this.rig.poseSit(this.lean, spT, this.time);
         this.sled.visible = true;
+
+        // hug the surface: lift the rigid sled above the highest ground under
+        // its footprint (uphill edge on a slope, the rising side of a concave
+        // transition) so the disc + rider never sink into the snow. keeps it
+        // clean on any angle without touching the point physics.
+        const hdx = Math.sin(this.heading), hdz = Math.cos(this.heading);
+        const fr = 0.55;
+        let hug = this.pos.y;
+        const samp = [[hdx, hdz], [-hdx, -hdz], [hdz, -hdx], [-hdz, hdx]];
+        for (const [ox, oz] of samp) {
+          const hh = t.height(this.pos.x + ox * fr, this.pos.z + oz * fr);
+          if (hh > hug) hug = hh;
+        }
+        this.root.position.y = hug + BODY_CLEAR - this.visCushion;
       }
       this.root.quaternion.copy(this.visQuat);
       this.root.rotation.order = 'XYZ';
