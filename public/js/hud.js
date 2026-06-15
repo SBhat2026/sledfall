@@ -79,7 +79,7 @@ export class Hud {
 
     // contextual prompts
     if (player.state === 'walk') {
-      this.prompt('<b>E</b> hop on · <b>LMB</b> snowball · <b>G</b> build kicker · <b>B</b> shop');
+      this.prompt('<b>E</b> hop on · hold <b>LMB</b> aim snowball · <b>Q</b> roll boulder · <b>G</b> kicker');
     } else if (player.state === 'sled' && player.planarSpeed() < 1.5 && player.grounded) {
       this.prompt('<b>W</b> — push off · <b>E</b> — get off and walk · <b>B</b> — sled shop');
     } else {

@@ -1,7 +1,7 @@
 // Player: custom momentum physics — slope-driven acceleration, lateral grip,
 // carve/drift, airtime + tricks, tumble crashes, walk mode.
 import * as THREE from 'three';
-import { SPAWN, SPAWN_HEADING } from './terrain.js';
+import { SPAWN, SPAWN_HEADING, surfaceAt } from './terrain.js';
 import { PenguinRig, createSled, CHARACTERS } from './character.js';
 
 const G = 13.5;                 // exaggerated gravity (arcade)
@@ -182,6 +182,10 @@ export class Player {
     const t = this.terrain;
     this.prevPos.copy(this.pos);
     const n = t.normal(this.pos.x, this.pos.z, _n);
+    // surface under the sled: groomed run (fast), deep powder (slow + grippy),
+    // glacier ice (slippery + fast). drives grip + drag below.
+    const surf = surfaceAt(this.pos.x, this.pos.z);
+    this.surfaceKind = surf.kind;
 
     // slope-projected gravity → the engine of the game
     const gDotN = -G * n.y;
@@ -212,7 +216,7 @@ export class Player {
     // overlean: hard steering at speed overwhelms grip — the sled slides out,
     // and if the slide gets big enough you spin out (lean too hard = wipe)
     const overlean = Math.abs(steerIn) * THREE.MathUtils.clamp((sp - 16) / 14, 0, 1);
-    const grip = GRIP * this.stats.grip * (1 - overlean * 0.6);
+    const grip = GRIP * this.stats.grip * surf.grip * (1 - overlean * 0.6);
     const latSpeed = _lat.length();
     this.vel.addScaledVector(_lat, -Math.min(1, grip * dt));
     if (latSpeed > 13 && Math.abs(steerIn) > 0.6 && sp > 18) { this._crash('SPUN OUT!'); return; }
@@ -233,7 +237,7 @@ export class Player {
 
     // quadratic drag → terminal velocity (better sleds = lower drag)
     const v = this.speed();
-    if (v > 0.01) this.vel.addScaledVector(this.vel, -DRAG_K * this.stats.drag * (tucking ? TUCK_DRAG : 1) * v * dt);
+    if (v > 0.01) this.vel.addScaledVector(this.vel, -DRAG_K * this.stats.drag * surf.drag * (tucking ? TUCK_DRAG : 1) * v * dt);
 
     // integrate + ground constraint (world is infinite — no bounds)
     this.pos.addScaledVector(this.vel, dt);

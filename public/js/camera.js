@@ -17,9 +17,12 @@ export class ChaseCam {
     this.first = true;
     this.shake = 0;
     this._tilt = 0;
+    this.aim = 0;          // 0 = chase, 1 = over-the-shoulder aiming
+    this.aimTarget = 0;
   }
 
   impulse(strength) { this.shake = Math.min(1.5, this.shake + strength); }
+  setAim(on) { this.aimTarget = on ? 1 : 0; }
 
   update(player, dt) {
     const [mdx, mdy] = this.input.takeMouse();
@@ -41,9 +44,12 @@ export class ChaseCam {
       this.followYaw += d * (1 - Math.pow(0.002, dt));
     }
 
+    // ease toward / out of aim (over-the-shoulder)
+    this.aim += (this.aimTarget - this.aim) * (1 - Math.pow(0.0006, dt));
+
     const walk = player.state === 'walk';
-    const dist = walk ? 4.6 : 5.4 + Math.min(2.0, sp * 0.045);
-    const height = walk ? 2.2 : 1.9; // low camera = ground rushes past faster
+    const dist = THREE.MathUtils.lerp(walk ? 4.6 : 5.4 + Math.min(2.0, sp * 0.045), 2.5, this.aim);
+    const height = THREE.MathUtils.lerp(walk ? 2.2 : 1.9, 1.65, this.aim);
     const worldYaw = this.followYaw + this.yaw + Math.PI; // behind the player
     this.input.camYaw = this.followYaw + this.yaw;        // walk-mode movement frame
 
@@ -84,11 +90,21 @@ export class ChaseCam {
     const oy = (Math.sin(t * 41.1) + Math.sin(t * 29.9)) * chatter;
 
     this.camera.position.copy(this.pos).add(new THREE.Vector3(ox, oy, 0));
+    // over-the-shoulder: shift to the right so the rider sits left-of-frame
+    if (this.aim > 0.001) {
+      const vdx = this.look.x - this.camera.position.x, vdz = this.look.z - this.camera.position.z;
+      const rl = Math.hypot(vdx, vdz) || 1;
+      const rx = vdz / rl, rz = -vdx / rl; // screen-right on the ground
+      this.camera.position.x += rx * this.aim * 0.85;
+      this.camera.position.z += rz * this.aim * 0.85;
+      this.look.x += rx * this.aim * 0.5;
+      this.look.z += rz * this.aim * 0.5;
+    }
     this.camera.lookAt(this.look);
 
-    // dynamic FOV (eased, capped)
+    // dynamic FOV (eased, capped) — narrows a touch while aiming
     const spT = THREE.MathUtils.clamp((sp - 8) / 28, 0, 1);
-    const target = BASE_FOV + (MAX_FOV - BASE_FOV) * spT * spT;
+    const target = THREE.MathUtils.lerp(BASE_FOV + (MAX_FOV - BASE_FOV) * spT * spT, 52, this.aim);
     this.camera.fov += (target - this.camera.fov) * (1 - Math.pow(0.001, dt));
 
     // lean tilt

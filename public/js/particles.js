@@ -107,6 +107,56 @@ export class Snowfall {
   }
 }
 
+// Twinkling snow sparkle: a disc of bright specks around the camera, each
+// blinking on its own phase, reseeded as you travel. Cheap stylized shimmer.
+export class Sparkle {
+  constructor(scene) {
+    this.n = 340;
+    this.r = 60;
+    this.pos = new Float32Array(this.n * 3);
+    this.ground = new Float32Array(this.n);
+    this.phase = new Float32Array(this.n);
+    for (let i = 0; i < this.n; i++) {
+      this.phase[i] = Math.random() * 6.28;
+      this.pos[i * 3 + 1] = -9999;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3));
+    const mat = new THREE.PointsMaterial({
+      color: 0xffffff, size: 0.16, transparent: true, opacity: 0.9,
+      depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true,
+    });
+    this.points = new THREE.Points(geo, mat);
+    this.points.frustumCulled = false;
+    scene.add(this.points);
+    this.center = new THREE.Vector3(1e9, 0, 1e9);
+    this.t = 0;
+  }
+
+  _reseed(cx, cz, terrain) {
+    this.center.set(cx, 0, cz);
+    for (let i = 0; i < this.n; i++) {
+      const a = Math.random() * 6.28, rr = Math.sqrt(Math.random()) * this.r;
+      const x = cx + Math.cos(a) * rr, z = cz + Math.sin(a) * rr;
+      this.pos[i * 3] = x;
+      this.ground[i] = terrain.height(x, z) + 0.06;
+      this.pos[i * 3 + 2] = z;
+    }
+  }
+
+  update(dt, camPos, terrain) {
+    this.t += dt;
+    if (Math.hypot(camPos.x - this.center.x, camPos.z - this.center.z) > 22) {
+      this._reseed(camPos.x, camPos.z, terrain);
+    }
+    for (let i = 0; i < this.n; i++) {
+      const on = Math.sin(this.t * 3.2 + this.phase[i]) > 0.55; // brief glints
+      this.pos[i * 3 + 1] = on ? this.ground[i] : -9999;
+    }
+    this.points.geometry.attributes.position.needsUpdate = true;
+  }
+}
+
 // Fading ribbon left in the snow behind the sled.
 export class Trail {
   constructor(scene) {

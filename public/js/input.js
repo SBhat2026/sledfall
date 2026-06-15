@@ -7,6 +7,7 @@ export class Input {
     this.mouseDY = 0;
     this.camYaw = 0;            // written by the camera each frame (walk-mode reference)
     this.locked = false;
+    this.mouse0 = false;        // left button held (aim/charge)
 
     window.addEventListener('keydown', (e) => {
       if (e.repeat) return;
@@ -26,8 +27,10 @@ export class Input {
       this.mouseDY += e.movementY;
     });
     window.addEventListener('mousedown', (e) => {
-      if (this.locked && e.button === 0) this.pressed.add('Mouse0'); // throw etc.
+      if (this.locked && e.button === 0) { this.pressed.add('Mouse0'); this.mouse0 = true; }
     });
+    window.addEventListener('mouseup', (e) => { if (e.button === 0) this.mouse0 = false; });
+    window.addEventListener('blur', () => { this.mouse0 = false; });
     this.canvas = canvas;
   }
 

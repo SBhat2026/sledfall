@@ -120,6 +120,26 @@ export const LODGE = (() => {
   return { x, z, y, r: 24 };
 })();
 
+// ---- biomes / surfaces ----------------------------------------------------
+// moderate-size zones: forest (the common one, dense pines), open (sparse),
+// and rare all-ice glaciers. drives tree density, surface grip and colour.
+function glacierField(x, z) { return fbm(x * 0.0013 + 401, z * 0.0013 + 88, 2); }
+function forestField(x, z)  { return fbm(x * 0.0017 + 77,  z * 0.0017 + 150, 3); }
+// 0 → not ice, 1 → solid glacier (soft edge so it blends in)
+function glacierMask(x, z) { return sstep(0.70, 0.80, glacierField(x, z)); }
+// 'glacier' | 'open' | 'forest'
+function biomeAt(x, z) {
+  if (glacierField(x, z) > 0.74) return 'glacier';
+  return forestField(x, z) < 0.36 ? 'open' : 'forest';
+}
+// surface the sled rides: groomed run, slick glacier ice, or deep powder.
+// returns grip / drag multipliers + a label for effects.
+export function surfaceAt(x, z) {
+  if (trailFactor(x, z) > 0.45) return { kind: 'groomed', grip: 1.0, drag: 0.95 };
+  if (glacierField(x, z) > 0.72) return { kind: 'ice', grip: 0.34, drag: 0.7 };
+  return { kind: 'powder', grip: 1.12, drag: 1.32 };
+}
+
 // player-built kickers: injected into the height function so physics and
 // the mesh always agree; nearby chunks get rebuilt when one is placed
 const userRamps = [];
@@ -144,8 +164,8 @@ function rampAt(ax, az) {
   r = {
     bx, bz,
     dx: -gx / gl, dz: -gz / gl,                  // unit downhill
-    h: 6 + hash2(ax + 9, az + 4) * 5,            // 6..11 m lip
-    len: 20, w: 9 + hash2(ax + 1, az + 8) * 5,   // 9..14 m wide
+    h: 8 + hash2(ax + 9, az + 4) * 8,            // 8..16 m lip — big natural booters
+    len: 22, w: 11 + hash2(ax + 1, az + 8) * 8,  // 11..19 m wide
   };
   rampCache.set(key, r);
   return r;
@@ -180,12 +200,14 @@ export function terrainHeight(x, z) {
   }
 
   const tf = 1 - sstep(5, 17, adx);
-  const rough = 1 - tf * 0.9; // trail is groomed smooth
+  // glaciers read as smooth glassy ice — flatten chatter + moguls there
+  const ice = glacierMask(x, z);
+  const rough = (1 - tf * 0.9) * (1 - ice * 0.92); // groomed run & ice = smooth
 
   // surface chatter
   y += (fbm(x * 0.03 + 7.7, z * 0.03 + 1.3, 3) - 0.5) * 2 * 1.9 * rough;
 
-  // mogul fields, region-gated, never on the trail
+  // mogul fields, region-gated, never on the trail or glaciers
   const mg = sstep(0.62, 0.78, fbm(x * 0.004 + 211, z * 0.004 + 77, 2)) * rough;
   if (mg > 0) y += Math.sin(x * 0.52) * Math.sin(z * 0.47) * 1.25 * mg;
 
@@ -518,9 +540,21 @@ export class Terrain {
       terrainNormal(wx, wz, nv);
       nor.setXYZ(i, nv.x, nv.y, nv.z);
       const tf = trailFactor(wx, wz);
-      gcols[i * 3] = 0.95 - tf * 0.30;     // → packed-snow blue
-      gcols[i * 3 + 1] = 0.96 - tf * 0.16;
-      gcols[i * 3 + 2] = 1.0;
+      const ice = glacierMask(wx, wz);
+      // soft slope shading: flats stay bright, steeper faces cool + darken a
+      // touch so the terrain reads with form (stylised, no textures)
+      const shade = 1 - (1 - nv.y) * 0.28;
+      // base powder white → packed-snow blue on the groomed runs
+      let r = 0.95 - tf * 0.30;
+      let g = 0.965 - tf * 0.16;
+      let b = 1.0;
+      // glacier ice: glassy cyan-blue
+      r += (0.66 - r) * ice;
+      g += (0.85 - g) * ice;
+      b += (0.98 - b) * ice;
+      gcols[i * 3] = r * shade;
+      gcols[i * 3 + 1] = g * shade;
+      gcols[i * 3 + 2] = b * (1 - (1 - nv.y) * 0.05); // keep highlights blue-cool
     }
     geo.setAttribute('color', new THREE.BufferAttribute(gcols, 3));
     const ground = new THREE.Mesh(geo, this.groundMat);
@@ -576,6 +610,7 @@ export class Terrain {
         if (wx < ox - CHUNK / 2 || wx > ox + CHUNK / 2) continue;
         if ((wx - SPAWN.x) ** 2 + (wz - SPAWN.z) ** 2 < 16 * 16) continue;
         if ((wx - LODGE.x) ** 2 + (wz - LODGE.z) ** 2 < (LODGE.r + 3) ** 2) continue;
+        if (glacierMask(wx, wz) > 0.5) continue;     // glaciers stay open ice
         terrainNormal(wx, wz, n);
         if (n.y < 0.6) continue;
         const wy = terrainHeight(wx, wz);
@@ -620,12 +655,19 @@ export class Terrain {
       if ((wx - SPAWN.x) ** 2 + (wz - SPAWN.z) ** 2 < 16 * 16) continue;
       if ((wx - LODGE.x) ** 2 + (wz - LODGE.z) ** 2 < (LODGE.r + 3) ** 2) continue;
       if (trailFactor(wx, wz) > 0.18) continue;      // keep the three runs clear
-      const isTree = rng() < 0.82;
-      // dense everywhere off-run: there's always something to dodge between
-      // the runs (high floor), thicker in the forested regions
-      const dens = isTree ? 0.55 + 0.42 * forestDensity(wx, wz) : 0.34;
-      const pick = rng();
-      if (pick > dens) continue;
+      // biome decides what's here: forest is common + dense, open is sparse,
+      // glaciers are bare ice with only the odd boulder
+      const biome = biomeAt(wx, wz);
+      let isTree;
+      if (biome === 'glacier') {
+        if (rng() > 0.09) continue;                  // open ice — mostly clear
+        isTree = false;
+      } else {
+        const forest = biome === 'forest';
+        isTree = rng() < (forest ? 0.9 : 0.5);
+        const dens = isTree ? (forest ? 0.92 : 0.32) : (forest ? 0.22 : 0.34);
+        if (rng() > dens) continue;
+      }
       terrainNormal(wx, wz, n);
       if (n.y < 0.62) continue;
       const wy = terrainHeight(wx, wz);
