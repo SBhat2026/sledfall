@@ -169,10 +169,13 @@ function pondInfluence(x, z) {
 
 // surface the sled rides: groomed run, slick ice (glacier or pond), or powder.
 // returns grip / drag multipliers + a label for effects.
+// fric = constant rolling deceleration (m/s²): groomed run glides and keeps
+// flowing on the descent, deep powder grabs and halts a flat glide quickly,
+// ice is near-frictionless so you skate a long way.
 export function surfaceAt(x, z) {
-  if (trailFactor(x, z) > 0.45) return { kind: 'groomed', grip: 1.0, drag: 0.95 };
-  if (glacierField(x, z) > 0.72 || pondInfluence(x, z)) return { kind: 'ice', grip: 0.34, drag: 0.7 };
-  return { kind: 'powder', grip: 1.12, drag: 1.32 };
+  if (trailFactor(x, z) > 0.45) return { kind: 'groomed', grip: 1.0, drag: 0.95, fric: 1.0 };
+  if (glacierField(x, z) > 0.72 || pondInfluence(x, z)) return { kind: 'ice', grip: 0.34, drag: 0.7, fric: 0.3 };
+  return { kind: 'powder', grip: 1.12, drag: 1.32, fric: 4.0 };
 }
 
 // player-built kickers: injected into the height function so physics and

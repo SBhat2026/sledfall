@@ -4,14 +4,15 @@ import * as THREE from 'three';
 import { SPAWN, SPAWN_HEADING, surfaceAt } from './terrain.js';
 import { PenguinRig, createSled, CHARACTERS } from './character.js';
 
-const G = 13.5;                 // exaggerated gravity (arcade)
+const G = 11.5;                 // exaggerated gravity (arcade) — constant everywhere
 const DRAG_K = 0.0036;          // quadratic drag → terminal ≈ 36 m/s
 const GRIP = 7.5;               // lateral damping /s (carving)
 const CARVE = 4.5;              // velocity-redirect toward heading /s
 const BRAKE = 7.0;
 const PADDLE = 6.5;             // push accel at low speed
 const TUCK_DRAG = 0.55;         // drag multiplier while tucking (hold W at speed)
-const SNAP_DIST = 0.06;         // base ground-stick distance (speed term added per step)
+const SNAP_DIST = 0.2;          // base ground-stick distance (speed term added per step)
+const STICK_K = 0.9;            // how aggressively the sled hugs ground over bumps
 const CRASH_LAND_VN = 26;       // downward impact speed that ends you (designed jumps land ≈17–21)
 const CRASH_TILT = 1.35;        // rad of leftover flip rotation tolerated on landing
 const POP_MAX = 0.12;           // max momentum bonus off a lip (subtle, but still pops)
@@ -19,7 +20,7 @@ const LAND_RECOVER = 0.5;       // fraction of landing impact returned on slope-
 const WALK_SPEED = 4.4;
 const SPRINT_MULT = 2.0;        // Shift while walking → sprint
 const BODY_CLEAR = 0.05;        // sit the sled this far proud of the surface
-const MAX_SPEED = 44;           // hard top speed — riding a cliff stays fast, not silly
+const MAX_SPEED = 36;           // hard top speed — riding a cliff stays fast, not silly
 
 const _n = new THREE.Vector3();
 const _v = new THREE.Vector3();
@@ -90,7 +91,7 @@ export class Player {
     this.visQuat = new THREE.Quaternion();
     this.walkCycle = 0;
 
-    this.respawn(true);
+    this.respawn(true, true); // start on foot at the lodge, hike up, then sled down
   }
 
   // swap in a sled from the shop: stats + meshes (riding and crash copies)
@@ -119,7 +120,7 @@ export class Player {
     try { localStorage.setItem('sledfall-char', id); } catch { /* no storage */ }
   }
 
-  respawn(toSummit = false) {
+  respawn(toSummit = false, walking = false) {
     if (toSummit) {
       // user-set respawn point wins; the spawn peak is the default
       const rp = this.respawnPoint;
@@ -127,14 +128,17 @@ export class Player {
     }
     this.pos.y = this.terrain.height(this.pos.x, this.pos.z) + 0.2;
     this.vel.set(0, 0, 0);
-    if (toSummit) {
+    if (walking) {
+      this.heading = Math.PI;   // face uphill — hike up from the lodge, then sled down
+    } else if (toSummit) {
       this.heading = this.respawnPoint ? this.respawnPoint.heading : SPAWN_HEADING;
     } else {
       // face the local downhill so a reset always points somewhere useful
       const n = this.terrain.normal(this.pos.x, this.pos.z, _n);
       this.heading = (Math.abs(n.x) + Math.abs(n.z)) > 0.02 ? Math.atan2(n.x, n.z) : this.heading;
     }
-    this.state = 'sled';
+    this.state = walking ? 'walk' : 'sled';
+    this.moving = false;
     this.grounded = true;
     this.airPitch = this.airSpin = this.airTime = 0;
     this.sledDetached.visible = false;
@@ -239,6 +243,15 @@ export class Player {
     // quadratic drag → terminal velocity (better sleds = lower drag)
     const v = this.speed();
     if (v > 0.01) this.vel.addScaledVector(this.vel, -DRAG_K * this.stats.drag * surf.drag * (tucking ? TUCK_DRAG : 1) * v * dt);
+    // surface friction: a constant deceleration that brings a glide to rest on
+    // flat snow but is easily overpowered by gravity on any real slope, so
+    // descents still flow. ice is near-frictionless → you keep gliding far;
+    // packed runs glide; deep powder grabs and stops you quickly.
+    const fm = this.speed();
+    if (fm > 1e-4) {
+      const fr = surf.fric * (tucking ? 0.6 : 1) * dt;
+      this.vel.multiplyScalar(Math.max(0, fm - fr) / fm);
+    }
     // soft top-speed cap: gravity still drives you to the cap on any slope, but
     // a near-vertical face can't run the speed away to something that feels broken
     const vc = this.speed();
@@ -249,7 +262,7 @@ export class Player {
     const gy = t.height(this.pos.x, this.pos.z);
     // ground-follow only while the gap stays small for one step — a lip or
     // drop opens the gap faster than this and we detach instead of sticking
-    const stick = SNAP_DIST + this.planarSpeed() * dt * 0.55;
+    const stick = SNAP_DIST + this.planarSpeed() * dt * STICK_K;
     if (this.pos.y <= gy + stick) {
       this.pos.y = gy;
       const vn = this.vel.dot(n);
@@ -563,7 +576,7 @@ export class Player {
       const n = this.grounded
         ? t.normal(this.pos.x, this.pos.z, _n)
         : _n.set(0, 1, 0);
-      const nLerp = this.grounded ? Math.min(1, dt * 16) : 1 - Math.pow(0.02, dt);
+      const nLerp = this.grounded ? Math.min(1, dt * 26) : 1 - Math.pow(0.02, dt);
       this.smoothNormal.lerp(n, nLerp).normalize();
 
       if (this.state === 'air') {
@@ -592,7 +605,7 @@ export class Player {
         _q.setFromRotationMatrix(m);
         const roll = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -this.lean * 0.22);
         _q.multiply(roll);
-        this.visQuat.slerp(_q, 1 - Math.pow(0.000001, dt));
+        this.visQuat.slerp(_q, Math.min(1, dt * 22)); // snap flush to the slope — visibly banks
         const spT = THREE.MathUtils.clamp(this.planarSpeed() / 30, 0, 1);
         this.rigMount.position.set(0, 0.14, 0.05); // seated in the saucer dish
         this.rig.poseSit(this.lean, spT, this.time);
