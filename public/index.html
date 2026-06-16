@@ -20,6 +20,10 @@
 
   #alt { right:28px; top:22px; font-size:14px; font-weight:600; opacity:.85; text-align:right; }
 
+  #minimap { position:fixed; right:24px; top:54px; width:148px; height:148px; z-index:6;
+    border-radius:50%; background:rgba(8,16,34,.42); border:2px solid rgba(143,208,255,.35);
+    box-shadow:0 4px 16px rgba(0,0,20,.35); pointer-events:none; }
+
   #trick { left:50%; top:24%; transform:translateX(-50%); font-size:34px; font-weight:800;
     opacity:0; transition:opacity .15s; text-align:center; }
   #trick .pts { font-size:20px; font-weight:700; color:#ffd34d; display:block; }
@@ -99,7 +103,7 @@
   <div class="keys">
     A/D — steer &nbsp;·&nbsp; W — push / tuck &nbsp;·&nbsp; S — brake &nbsp;·&nbsp; hit boosters &amp; ramps with speed to fly<br>
     On foot: hold LMB — aim &amp; throw snowball &nbsp;·&nbsp; Q — roll a giant snowball &nbsp;·&nbsp; Shift — sprint &nbsp;·&nbsp; G — kicker<br>
-    Mouse — look &nbsp;·&nbsp; E — on / off sled &nbsp;·&nbsp; walk to the cabin &amp; press F — shop &nbsp;·&nbsp; R — set respawn &nbsp;·&nbsp; T — go to respawn
+    Mouse — look &nbsp;·&nbsp; E — on / off sled &nbsp;·&nbsp; B — belly slide &nbsp;·&nbsp; walk to the cabin &amp; press F — shop &nbsp;·&nbsp; R — set respawn &nbsp;·&nbsp; T — go to respawn
   </div>
 </div>
 
@@ -109,19 +113,20 @@
 <div class="hud" id="speed"><div class="num">0</div><div class="unit">M/S</div></div>
 <div class="hud" id="score"><small>SCORE</small><span id="scoreNum">0</span></div>
 <div class="hud" id="alt">DROP&nbsp;<span id="altNum">0</span>m</div>
+<canvas id="minimap" width="148" height="148"></canvas>
 <div class="hud" id="trick"><span id="trickName"></span><span class="pts" id="trickPts"></span></div>
 <div class="hud" id="prompt"></div>
 <div class="hud" id="msg"></div>
 <div class="hud" id="help">
   <b>A/D</b> steer (spin in air) · <b>W</b> push / hold to tuck (flip in air) · <b>S</b> brake<br>
   on foot: hold <b>LMB</b> aim snowball · <b>Q</b> roll giant snowball · <b>Shift</b> sprint · <b>G</b> kicker<br>
-  <b>E</b> on/off sled · <b>F</b> shop (at the cabin) · <b>C</b> swap rider · <b>R</b> set respawn · <b>T</b> go to respawn · <b>H</b> hide help
+  <b>E</b> on/off sled · <b>B</b> belly slide · <b>F</b> shop (at the cabin) · <b>C</b> swap rider · <b>R</b> set respawn · <b>T</b> go to respawn · <b>H</b> hide help
 </div>
 
 <div id="shop">
   <header><h2>SLED SHOP</h2><div class="pts"><span id="shopPoints">0</span> PTS</div></header>
   <div id="shopCards"></div>
-  <button id="shopClose">CLOSE&nbsp;(B)</button>
+  <button id="shopClose">CLOSE&nbsp;(ESC)</button>
 </div>
 
 <script type="importmap">

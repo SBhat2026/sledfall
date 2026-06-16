@@ -87,12 +87,23 @@ function nearestRun(x, z) {
 
 // the spawn / lodge / kickers all reference the middle run
 export function trailX(z) { return runCenter(RUNS[1], z); }
+// every run's centre x at a given z — for the minimap
+export function runCentersAt(z) { return RUNS.map(r => runCenter(r, z)); }
 // guaranteed-descent elevation profile shared by every run — the runs always
-// flow downhill no matter what the mountains do. Two sine layers create the
-// rhythm: long steep/mellow phases plus short undulations (micro-steps) —
-// slope stays within ≈ -0.10 … -0.46, never flat, never cliff
+// flow downhill no matter what the mountains do. Stacked sine layers create
+// the rhythm and a wide range of gradients: long steep pitches, mellow benches,
+// rollers and micro-steps. amplitudes are tuned so the slope always stays
+// negative (≈ -0.11 … -0.60) — steep & varied, but never flat or a back-slope.
 function trailProfile(z) {
-  return -z * 0.28 + 25 * Math.sin(z * 0.0045 + 0.9) + 4 * Math.sin(z * 0.017 + 2.1);
+  return -z * 0.36
+       + 26 * Math.sin(z * 0.0042 + 0.9)   // long steep/mellow phases
+       + 7  * Math.sin(z * 0.013 + 2.1)    // medium rollers
+       + 1.5 * Math.sin(z * 0.031 + 0.4);  // micro-steps
+}
+// half-pipe stretches: organic z-bands where the run becomes a steep-walled
+// U you can pump and launch out of. 0 → normal groove, 1 → full pipe.
+function halfpipe(z) {
+  return sstep(0.63, 0.74, fbm(z * 0.0016 + 300.0, 7.0, 2));
 }
 // 1 on the nearest run's centre → 0 off-run (grooming / colour width)
 export function trailFactor(x, z) {
@@ -199,11 +210,16 @@ function rampAt(ax, az) {
   const gx = (baseHeight(bx + e, bz) - baseHeight(bx - e, bz)) / (2 * e);
   const gz = (baseHeight(bx, bz + e) - baseHeight(bx, bz - e)) / (2 * e);
   const gl = Math.hypot(gx, gz) || 1;
+  // size class biased toward small/medium, with the occasional huge booter;
+  // bigger lips get a longer rising face + wider deck so they stay rideable
+  const sz = hash2(ax + 9, az + 4);
+  const h = 3.5 + sz * sz * 18;                  // ≈ 3.5 .. 21.5 m
   r = {
     bx, bz,
     dx: -gx / gl, dz: -gz / gl,                  // unit downhill
-    h: 8 + hash2(ax + 9, az + 4) * 8,            // 8..16 m lip — big natural booters
-    len: 22, w: 11 + hash2(ax + 1, az + 8) * 8,  // 11..19 m wide
+    h,
+    len: 13 + sz * 16,                           // 13..29 m face (scales with height)
+    w: 8 + hash2(ax + 1, az + 8) * 11,           // 8..19 m wide
   };
   rampCache.set(key, r);
   return r;
@@ -260,6 +276,19 @@ export function terrainHeight(x, z) {
     const dx = nr.dx;
     y += -1.6 * tf + (dx * dx) * 0.012 * tf;     // dip + parabolic walls
     y += -nr.curve * dx * 42 * tf;               // superelevation into the turn
+
+    // half-pipe stretches: steep curved walls (concave so you hold the slope
+    // riding up) that crest into a convex lip — carry speed up the wall and the
+    // launch test throws you clean out the top
+    const hp = halfpipe(z);
+    if (hp > 0) {
+      const adx = dx < 0 ? -dx : dx;
+      const WT = 15;                              // lip ≈ 15 m off centre
+      const wall = sstep(2.5, WT, adx);           // 0 at centre → 1 at the lip
+      y += hp * tf * wall * wall * 8.5;           // up to ~8.5 m walls
+      const lip = Math.exp(-((adx - WT) ** 2) / (2 * 3 * 3)); // kick at the very top
+      y += hp * tf * lip * 1.3;
+    }
   }
 
   // jump knolls (rounded bumps)
@@ -329,11 +358,13 @@ function trailRampAt(k) {
   // launch direction = trail tangent (downhill along the run)
   const tx = (trailX(bz + 5) - trailX(bz - 5)) / 10;
   const tl = Math.hypot(tx, 1);
+  // varied trail jumps: mostly small/medium tabletops, the odd big one
+  const sz = hash2(k * 3 + 1, k * 7 + 9);
   r = {
     bx, bz,
     dx: tx / tl, dz: 1 / tl,
-    h: 5 + hash2(k * 3 + 1, k * 7 + 9) * 4,     // 5..9 m — friendly trail jumps
-    len: 18, w: 11,
+    h: 3 + sz * sz * 11,                        // 3..14 m
+    len: 14 + sz * 12, w: 11,
   };
   trailRampCache.set(k, r);
   return r;

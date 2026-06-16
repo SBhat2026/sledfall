@@ -237,7 +237,6 @@ window.addEventListener('keydown', (e) => {
     hud.trick('NOW PLAYING: ' + CHARACTERS[next].name.toUpperCase(), 0);
   }
   if (e.code === 'KeyF' && started && (nearLodge || shop.open)) shop.toggle();
-  if (e.code === 'KeyB' && started) shop.toggle(); // shortcut, works anywhere
   if (e.code === 'Escape' && shop.open) shop.toggle(false);
   // drop a rolling, growing snowball boulder (on foot)
   if (e.code === 'KeyQ' && started && player.state === 'walk' && !shop.open) {

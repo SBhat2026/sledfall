@@ -20,6 +20,7 @@ const LAND_RECOVER = 0.5;       // fraction of landing impact returned on slope-
 const WALK_SPEED = 4.4;
 const SPRINT_MULT = 2.0;        // Shift while walking → sprint
 const BODY_CLEAR = 0.05;        // sit the sled this far proud of the surface
+const BELLY_CLEAR = 0.02;       // belly-slide hugs the snow closer than the sled
 const MAX_SPEED = 36;           // hard top speed — riding a cliff stays fast, not silly
 
 const _n = new THREE.Vector3();
@@ -42,7 +43,8 @@ export class Player {
     this.onScore = null;
     this.vel = new THREE.Vector3();
     this.heading = 0;             // yaw, 0 = facing +z (downhill)
-    this.state = 'sled';          // sled | air | walk | crash
+    this.state = 'sled';          // sled | belly | air | walk | crash
+    this.groundMode = 'sled';     // what we return to on landing: sled | belly
     this.grounded = true;
     this.lean = 0;
     this.time = 0;
@@ -138,6 +140,7 @@ export class Player {
       this.heading = (Math.abs(n.x) + Math.abs(n.z)) > 0.02 ? Math.atan2(n.x, n.z) : this.heading;
     }
     this.state = walking ? 'walk' : 'sled';
+    this.groundMode = 'sled';
     this.moving = false;
     this.grounded = true;
     this.airPitch = this.airSpin = this.airTime = 0;
@@ -166,13 +169,26 @@ export class Player {
       this.hud.fadeLift(() => this.respawn(true)); // teleport to the respawn point
       return;
     }
-    if (inp.consume('KeyE') && (this.state === 'sled' || this.state === 'walk') && this.grounded && this.planarSpeed() < 7) {
-      this.state = this.state === 'sled' ? 'walk' : 'sled';
-      if (this.state === 'sled') this.vel.multiplyScalar(0.3);
+    const canSwitch = this.grounded && this.planarSpeed() < 7 &&
+      (this.state === 'sled' || this.state === 'walk' || this.state === 'belly');
+    if (inp.consume('KeyE') && canSwitch) {
+      // E: toggle between the sled and on-foot
+      this.state = this.state === 'walk' ? 'sled' : 'walk';
+      if (this.state === 'sled') { this.groundMode = 'sled'; this.vel.multiplyScalar(0.3); }
+    }
+    if (inp.consume('KeyB') && this.grounded && this.planarSpeed() < 7 &&
+        (this.state === 'sled' || this.state === 'walk' || this.state === 'belly')) {
+      // B: flop onto the belly to slide, or stand back up
+      if (this.state === 'belly') {
+        this.state = 'walk';
+      } else {
+        this.state = 'belly'; this.groundMode = 'belly'; this.vel.multiplyScalar(0.5);
+      }
     }
 
     switch (this.state) {
-      case 'sled': this._updateSled(dt); break;
+      case 'sled':
+      case 'belly': this._updateSled(dt); break;
       case 'air': this._updateAir(dt); break;
       case 'walk': this._updateWalk(dt); break;
       case 'crash': this._updateCrash(dt); break;
@@ -191,6 +207,9 @@ export class Player {
     // glacier ice (slippery + fast). drives grip + drag below.
     const surf = surfaceAt(this.pos.x, this.pos.z);
     this.surfaceKind = surf.kind;
+    // belly slide: low-slung penguin toboggan — slides further (less friction),
+    // skids more (less edge grip), steers a touch lazily vs the sled
+    const belly = this.state === 'belly';
 
     // slope-projected gravity → the engine of the game
     const gDotN = -G * n.y;
@@ -205,7 +224,7 @@ export class Player {
 
     // steering: stronger with speed (weight-shift, not car steering)
     const speedFac = sp / (sp + 7);
-    const yawRate = steerIn * 2.2 * this.stats.steer * speedFac;
+    const yawRate = steerIn * 2.2 * this.stats.steer * speedFac * (belly ? 0.85 : 1);
     this.heading += yawRate * dt;
     this.lean = THREE.MathUtils.lerp(this.lean, steerIn, 1 - Math.pow(0.001, dt));
 
@@ -221,7 +240,7 @@ export class Player {
     // overlean: hard steering at speed overwhelms grip — the sled slides out,
     // and if the slide gets big enough you spin out (lean too hard = wipe)
     const overlean = Math.abs(steerIn) * THREE.MathUtils.clamp((sp - 16) / 14, 0, 1);
-    const grip = GRIP * this.stats.grip * surf.grip * (1 - overlean * 0.6);
+    const grip = GRIP * this.stats.grip * surf.grip * (1 - overlean * 0.6) * (belly ? 0.6 : 1);
     const latSpeed = _lat.length();
     this.vel.addScaledVector(_lat, -Math.min(1, grip * dt));
     if (latSpeed > 13 && Math.abs(steerIn) > 0.6 && sp > 18) { this._crash('SPUN OUT!'); return; }
@@ -249,7 +268,7 @@ export class Player {
     // packed runs glide; deep powder grabs and stops you quickly.
     const fm = this.speed();
     if (fm > 1e-4) {
-      const fr = surf.fric * (tucking ? 0.6 : 1) * dt;
+      const fr = surf.fric * (tucking ? 0.6 : 1) * (belly ? 0.5 : 1) * dt;
       this.vel.multiplyScalar(Math.max(0, fm - fr) / fm);
     }
     // soft top-speed cap: gravity still drives you to the cap on any slope, but
@@ -312,7 +331,7 @@ export class Player {
   }
 
   _goAirborne() {
-    if (this.state !== 'sled') return;
+    if (this.state !== 'sled' && this.state !== 'belly') return;
     this.state = 'air';
     this.grounded = false;
     this.airPitch = 0;
@@ -376,7 +395,7 @@ export class Player {
       }
       // hard flat landings bleed speed; slope-matched ones barely do
       if (hardness > 12) this.vel.multiplyScalar(1 - Math.min(0.3, (hardness - 12) * 0.025 * (1 - match * 0.8)));
-      this.state = 'sled';
+      this.state = this.groundMode; // back to whatever we launched as (sled / belly)
       this.grounded = true;
       this.landedImpact = hardness; // camera punch
       this.visCushion = Math.min(0.3, hardness * 0.014); // soft visual squish
@@ -518,7 +537,7 @@ export class Player {
       this.pos.y = t.height(this.pos.x, this.pos.z);
       const n = t.normal(this.pos.x, this.pos.z, _n);
       this.smoothNormal.copy(n);
-      this.state = 'sled';
+      this.state = this.groundMode === 'belly' ? 'belly' : 'sled';
       this.grounded = true;
       this.hud.clearMsg();
     }
@@ -614,7 +633,7 @@ export class Player {
         this.rig.poseWalk(dt, this.moving, this.sprinting ? 1.8 : 1);
         this.sled.visible = false;
       } else {
-        // sled: align up to smoothed normal, face heading, roll with lean
+        // sled / belly: align up to smoothed normal, face heading, roll with lean
         const up = this.smoothNormal;
         const fwd = this.headingDir(_f).addScaledVector(up, -_f.dot(up)).normalize();
         const m = new THREE.Matrix4();
@@ -625,11 +644,17 @@ export class Player {
         _q.multiply(roll);
         this.visQuat.slerp(_q, Math.min(1, dt * 22)); // snap flush to the slope — visibly banks
         const spT = THREE.MathUtils.clamp(this.planarSpeed() / 30, 0, 1);
-        this.rigMount.position.set(0, 0.14, 0.05); // seated in the saucer dish
-        this.rig.poseSit(this.lean, spT, this.time);
-        this.sled.visible = true;
+        if (this.state === 'belly') {
+          this.rigMount.position.set(0, 0.04, 0); // flat on the snow
+          this.rig.poseBelly(this.lean, spT, this.time);
+          this.sled.visible = false;
+        } else {
+          this.rigMount.position.set(0, 0.14, 0.05); // seated in the saucer dish
+          this.rig.poseSit(this.lean, spT, this.time);
+          this.sled.visible = true;
+        }
 
-        // hug the surface: lift the rigid sled above the highest ground under
+        // hug the surface: lift the rigid body above the highest ground under
         // its footprint (uphill edge on a slope, the rising side of a concave
         // transition) so the disc + rider never sink into the snow. keeps it
         // clean on any angle without touching the point physics.
@@ -641,7 +666,7 @@ export class Player {
           const hh = t.height(this.pos.x + ox * fr, this.pos.z + oz * fr);
           if (hh > hug) hug = hh;
         }
-        this.root.position.y = hug + BODY_CLEAR - this.visCushion;
+        this.root.position.y = hug + (this.state === 'belly' ? BELLY_CLEAR : BODY_CLEAR) - this.visCushion;
       }
       this.root.quaternion.copy(this.visQuat);
       this.root.rotation.order = 'XYZ';

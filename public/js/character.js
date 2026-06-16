@@ -262,6 +262,24 @@ export class PenguinRig {
     this.group.position.y = Math.sin(t * 23) * 0.012 * speedT;
   }
 
+  // belly slide: penguin flat on its front, head + chest arched up to look
+  // ahead, flippers swept out like little skis, legs trailing straight back.
+  poseBelly(lean, speedT = 0, t = 0) {
+    if (!this.ready) { this.group.rotation.set(1.45, 0, -lean * 0.2); return; }
+    this.group.rotation.set(1.42, 0, 0); // tip prone, head end up a touch
+    this._restPositions();
+    this._setW('Spine', -0.3, 0, -lean * 0.22);
+    this._setW('Chest', -0.2, 0, -lean * 0.1);
+    this._setW('Head', -0.5 - speedT * 0.1, lean * 0.3, 0);   // chin up, scanning the hill
+    this._setW('UpperArmL', 0, -0.2, -1.32 + lean * 0.25);     // flippers fanned back
+    this._setW('UpperArmR', 0, 0.2, 1.32 + lean * 0.25);
+    this._setW('UpperLegL', -0.18, 0.12, 0);                   // legs streamlined back
+    this._setW('UpperLegR', -0.18, -0.12, 0);
+    this._setW('LowerLegL', 0.15, 0, 0);
+    this._setW('LowerLegR', 0.15, 0, 0);
+    this.group.position.y = Math.sin(t * 28) * 0.008 * speedT; // little chatter
+  }
+
   // walking: play the baked walk clip via the mixer (advanced only while
   // moving; frozen at frame 0 when idle). falls back to a procedural waddle if
   // the model has no clip / hasn't loaded.
