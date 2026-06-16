@@ -260,10 +260,20 @@ export class Player {
     // integrate + ground constraint (world is infinite — no bounds)
     this.pos.addScaledVector(this.vel, dt);
     const gy = t.height(this.pos.x, this.pos.z);
-    // ground-follow only while the gap stays small for one step — a lip or
-    // drop opens the gap faster than this and we detach instead of sticking
-    const stick = SNAP_DIST + this.planarSpeed() * dt * STICK_K;
-    if (this.pos.y <= gy + stick) {
+    const gap = this.pos.y - gy;
+    // hold-the-slope vs launch: sample the slope AHEAD (where we just moved)
+    // and find how fast the ground drops away along our forward motion
+    // (slope · velocity). while we're descending at least as fast as the
+    // ground falls, gravity keeps us pinned to any angle. the instant the
+    // surface curves out from under us — a convex lip, a cliff edge, the back
+    // of a kicker — we're rising relative to the ground ahead and we detach.
+    const nA = t.normal(this.pos.x, this.pos.z, _n);
+    const groundRate = nA.y > 1e-3 ? -(nA.x * this.vel.x + nA.z * this.vel.z) / nA.y : -1e9;
+    const separating = this.vel.y > groundRate + 1.0; // m/s rising vs the slope ahead
+    // a small base window keeps the ride glued over chatter; the speed-scaled
+    // term only applies when we're NOT separating, so real drops still launch
+    const stick = SNAP_DIST + (separating ? 0 : this.planarSpeed() * dt * STICK_K);
+    if (gap <= stick) {
       this.pos.y = gy;
       const vn = this.vel.dot(n);
       if (vn < 0) this.vel.addScaledVector(n, -vn); // no bounce, just slide
@@ -573,16 +583,24 @@ export class Player {
       // terrain-aligned orientation. snap quickly to the ground normal so the
       // sled lies flush on any slope/wall (laggy smoothing was what let the
       // uphill edge dig into steep faces); ease gently back toward up in the air
+      // in the air, ease the reference toward world-up for tricks — but only
+      // gradually, so a low pop over a mogul/lip keeps the sled banked to the
+      // slope it left (no stiff upright flicker on little hops)
       const n = this.grounded
         ? t.normal(this.pos.x, this.pos.z, _n)
         : _n.set(0, 1, 0);
-      const nLerp = this.grounded ? Math.min(1, dt * 26) : 1 - Math.pow(0.02, dt);
+      const nLerp = this.grounded ? Math.min(1, dt * 26) : 1 - Math.pow(0.2, dt);
       this.smoothNormal.lerp(n, nLerp).normalize();
 
       if (this.state === 'air') {
-        // free rotation for tricks
-        _e.set(0, this.heading, 0);
-        _q.setFromEuler(_e);
+        // base orientation hugs the (slowly relaxing) ground normal so small
+        // hops look natural; the trick flip rotates on top of it
+        const up = this.smoothNormal;
+        const fwd = this.headingDir(_f).addScaledVector(up, -_f.dot(up)).normalize();
+        const m = new THREE.Matrix4();
+        const right = _v.crossVectors(up, fwd).normalize();
+        m.makeBasis(right.clone().negate(), up.clone(), fwd.clone());
+        _q.setFromRotationMatrix(m);
         const flip = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -this.airPitch);
         _q.multiply(flip);
         this.visQuat.slerp(_q, 1 - Math.pow(0.00001, dt));

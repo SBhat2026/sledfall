@@ -161,31 +161,41 @@ const arc = new THREE.Points(arcGeo, new THREE.PointsMaterial({
 }));
 arc.frustumCulled = false; arc.visible = false; scene.add(arc);
 let aiming = false, charge = 0;
+const AIM_LIFT = 2.5; // matches the upward bias snowball.throw adds to the shot
 
-function throwDir() {
-  const d = new THREE.Vector3();
-  camera.getWorldDirection(d);
-  if (d.y < -0.05) d.y = -0.05;
-  return d.normalize();
+// aim straight from the camera frame: mouse-X turns (yaw), mouse-Y sets the
+// launch elevation (look up → lob high, look down → flat). the arc + the
+// actual throw use this exact vector, so what you see is what you throw.
+function aimYaw() { return cam.followYaw + cam.yaw; }
+function aimElev() { return THREE.MathUtils.clamp(0.12 + (0.85 - cam.pitch) * 0.7, 0.05, 1.2); }
+function aimDir() {
+  const y = aimYaw(), el = aimElev();
+  const ch = Math.cos(el);
+  return new THREE.Vector3(Math.sin(y) * ch, Math.sin(el), Math.cos(y) * ch).normalize();
+}
+function aimSpeed(c) { return THREE.MathUtils.lerp(14, 30, c); }
+function aimOrigin(y) {
+  return player.pos.clone().add(new THREE.Vector3(0, 1.2, 0))
+    .add(new THREE.Vector3(Math.sin(y) * 0.6, 0, Math.cos(y) * 0.6));
 }
 function doThrow(c) {
-  const dir = throwDir();
-  const origin = player.pos.clone().add(new THREE.Vector3(0, 1.1, 0)).addScaledVector(dir, 0.5);
-  snowballs.throw(origin, dir, THREE.MathUtils.lerp(12, 26, c));
+  snowballs.throw(aimOrigin(aimYaw()), aimDir(), aimSpeed(c));
   audio?.thump?.(0.25);
 }
 function updateAimVisuals(on, c) {
   heldBall.visible = on;
-  arc.visible = on && c > 0.05;
+  arc.visible = on && c > 0.03;
   if (on) {
-    const fwd = player.headingDir(new THREE.Vector3());
-    heldBall.position.copy(player.pos).add(new THREE.Vector3(0, 1.05, 0)).addScaledVector(fwd, 0.22);
-    heldBall.scale.setScalar(0.07 + c * 0.13); // grows as it's packed
+    const y = aimYaw();
+    player.heading = y; // turn to face the aim while winding up
+    heldBall.position.copy(player.pos).add(new THREE.Vector3(0, 1.15, 0))
+      .add(new THREE.Vector3(Math.sin(y) * 0.35, 0, Math.cos(y) * 0.35));
+    heldBall.scale.setScalar(0.08 + c * 0.16); // grows as it's packed
   }
   if (arc.visible) {
-    const dir = throwDir();
-    const v = dir.clone().multiplyScalar(THREE.MathUtils.lerp(12, 26, c)).add(new THREE.Vector3(0, 2.5, 0));
-    const p = player.pos.clone().add(new THREE.Vector3(0, 1.1, 0)).addScaledVector(dir, 0.5);
+    const y = aimYaw();
+    const v = aimDir().multiplyScalar(aimSpeed(c)).add(new THREE.Vector3(0, AIM_LIFT, 0));
+    const p = aimOrigin(y);
     const a = arcGeo.attributes.position.array;
     for (let k = 0; k < ARC_N; k++) {
       a[k * 3] = p.x; a[k * 3 + 1] = p.y; a[k * 3 + 2] = p.z;
