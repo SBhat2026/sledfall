@@ -181,16 +181,27 @@ export class PenguinRig {
     const eyeY = cy + (maxY - cy) * 0.35;
     const eyeX = Math.max(0.03, maxX * 0.46);
     const band = Math.max(0.05, (maxY - minY) * 0.2);
-    let frontZ = -1e9;
-    for (const p of pts)
-      if (Math.abs(p.y - eyeY) < band && p.x > eyeX * 0.4 && p.x < eyeX * 1.8) frontZ = Math.max(frontZ, p.z);
-    if (frontZ < -1e8) frontZ = 0.1;
     const r = Math.max(0.022, (maxY - minY) * 0.07);
+    // find the actual face surface (front-most z) at THIS eye's spot, per side,
+    // so the bead seats on the face for either rig instead of on a global max
+    const frontAt = (side) => {
+      let fz = -1e9;
+      for (const p of pts) {
+        const sx = p.x * side;
+        if (sx > eyeX * 0.35 && sx < eyeX * 2.1 && Math.abs(p.y - eyeY) < band)
+          if (p.z > fz) fz = p.z;
+      }
+      return fz > -1e8 ? fz : 0.1;
+    };
     const eyeMat = new THREE.MeshStandardMaterial({ color: 0x05070a, roughness: 0.18, metalness: 0.05 });
     for (const side of [-1, 1]) {
       const eye = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 14), eyeMat);
-      eye.scale.set(1, 1.15, 0.8);
-      const pt = new THREE.Vector3(side * eyeX, eyeY, frontZ * 0.97);
+      eye.scale.set(1, 1.15, 0.78);
+      // embed the bead INTO the face: push its centre behind the surface so
+      // only the front cap pokes out (a black bead set in the head, not a ball
+      // floating off the front). depth scale 0.78 → ~0.39r of cap shows.
+      const fz = frontAt(side);
+      const pt = new THREE.Vector3(side * eyeX, eyeY, fz - r * 0.6);
       head.worldToLocal(pt);
       eye.position.copy(pt);
       head.add(eye);

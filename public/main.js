@@ -163,13 +163,28 @@ arc.frustumCulled = false; arc.visible = false; scene.add(arc);
 let aiming = false, charge = 0;
 const AIM_LIFT = 2.5; // matches the upward bias snowball.throw adds to the shot
 
-// aim straight from the camera frame: mouse-X turns (yaw), mouse-Y sets the
-// launch elevation (look up → lob high, look down → flat). the arc + the
-// actual throw use this exact vector, so what you see is what you throw.
-function aimYaw() { return cam.followYaw + cam.yaw; }
-function aimElev() { return THREE.MathUtils.clamp(0.12 + (0.85 - cam.pitch) * 0.7, 0.05, 1.2); }
+// Aim is its OWN smoothed yaw/elevation, seeded from the camera the instant
+// you start winding up and then eased toward the camera frame each step. This
+// breaks the feedback that made the reticle whip back and forth: previously the
+// aim read the camera, wrote player.heading, which the view chased, which moved
+// the aim again. Now the throw vector is a stable low-pass of the look frame —
+// what you see is what you throw, and it tracks the camera without oscillating.
+const aimS = { yaw: 0, elev: 0.4, on: false };
+function camElev() { return THREE.MathUtils.clamp(0.12 + (0.85 - cam.pitch) * 0.7, 0.05, 1.2); }
+function updateAim(on, dt) {
+  if (on && !aimS.on) { aimS.yaw = cam.followYaw + cam.yaw; aimS.elev = camElev(); } // seed
+  aimS.on = on;
+  if (!on) return;
+  const tgtYaw = cam.followYaw + cam.yaw;
+  let d = tgtYaw - aimS.yaw;
+  d = ((d + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI; // shortest arc
+  const k = 1 - Math.pow(0.0009, dt); // ~smooth follow, kills per-frame jitter
+  aimS.yaw += d * k;
+  aimS.elev += (camElev() - aimS.elev) * k;
+}
+function aimYaw() { return aimS.yaw; }
 function aimDir() {
-  const y = aimYaw(), el = aimElev();
+  const y = aimS.yaw, el = aimS.elev;
   const ch = Math.cos(el);
   return new THREE.Vector3(Math.sin(y) * ch, Math.sin(el), Math.cos(y) * ch).normalize();
 }
@@ -283,6 +298,7 @@ function frame(now) {
     aiming = false; charge = 0;
   }
   cam.setAim(aiming);
+  updateAim(aiming, dt);
   updateAimVisuals(aiming, charge);
 
   cam.update(player, dt);

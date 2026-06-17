@@ -11,8 +11,8 @@ const CARVE = 4.5;              // velocity-redirect toward heading /s
 const BRAKE = 7.0;
 const PADDLE = 6.5;             // push accel at low speed
 const TUCK_DRAG = 0.55;         // drag multiplier while tucking (hold W at speed)
-const SNAP_DIST = 0.2;          // base ground-stick distance (speed term added per step)
-const STICK_K = 0.9;            // how aggressively the sled hugs ground over bumps
+const LAUNCH_VN = 1.8;          // rise (m/s) above the slope ahead that detaches us → jump
+const CLIFF_GAP = 0.5;          // step off an overhang/cliff this far → airborne regardless
 const CRASH_LAND_VN = 26;       // downward impact speed that ends you (designed jumps land ≈17–21)
 const CRASH_TILT = 1.35;        // rad of leftover flip rotation tolerated on landing
 const POP_MAX = 0.12;           // max momentum bonus off a lip (subtle, but still pops)
@@ -280,37 +280,30 @@ export class Player {
     this.pos.addScaledVector(this.vel, dt);
     const gy = t.height(this.pos.x, this.pos.z);
     const gap = this.pos.y - gy;
-    // hold-the-slope vs launch: sample the slope AHEAD (where we just moved)
-    // and find how fast the ground drops away along our forward motion
-    // (slope · velocity). while we're descending at least as fast as the
-    // ground falls, gravity keeps us pinned to any angle. the instant the
-    // surface curves out from under us — a convex lip, a cliff edge, the back
-    // of a kicker — we're rising relative to the ground ahead and we detach.
+    // launch vs hold-the-slope, decided by velocity not by a stick distance.
+    // sample the slope AHEAD and find how fast the ground rises/falls along our
+    // travel (dH/dt = -slope·vel). for motion that hugs the surface, our own
+    // vertical velocity equals that rate exactly. when we're climbing a kicker
+    // or cresting a roller and the face flattens/drops out from under us, our
+    // upward momentum outruns the ground — gravity can't bend our path back
+    // onto it fast enough — and we fly. that surplus rise is the jump.
     const nA = t.normal(this.pos.x, this.pos.z, _n);
     const groundRate = nA.y > 1e-3 ? -(nA.x * this.vel.x + nA.z * this.vel.z) / nA.y : -1e9;
-    const separating = this.vel.y > groundRate + 1.0; // m/s rising vs the slope ahead
-    // a small base window keeps the ride glued over chatter; the speed-scaled
-    // term only applies when we're NOT separating, so real drops still launch
-    const stick = SNAP_DIST + (separating ? 0 : this.planarSpeed() * dt * STICK_K);
-    if (gap <= stick) {
-      this.pos.y = gy;
-      const vn = this.vel.dot(n);
-      if (vn < 0) this.vel.addScaledVector(n, -vn); // no bounce, just slide
-      this.grounded = true;
-    } else {
-      // momentum launch: take-off velocity = full speed carried along the lip
-      // surface, plus a small pop that scales with speed — fast hits fly,
-      // slow rolls just drop off the edge
+    const launchVN = this.vel.y - groundRate; // >0 = pulling up off the slope ahead
+    const fast = this.planarSpeed() > 4;      // too slow to send it → just tip over the lip
+    if ((launchVN > LAUNCH_VN && fast) || gap > CLIFF_GAP) {
+      // momentum launch: keep the full velocity we carried over the lip (it's
+      // already tangent to the take-off face) + a small speed-scaled pop
       const spd = this.vel.length();
-      if (spd > 3) {
-        const nL = t.normal(this.prevPos.x, this.prevPos.z, _n);
-        _v.copy(this.vel).addScaledVector(nL, -this.vel.dot(nL));
-        if (_v.y > 0.2 && _v.lengthSq() > 1) {
-          const pop = 1 + Math.min(POP_MAX, spd * 0.006);
-          this.vel.copy(_v).normalize().multiplyScalar(spd * pop);
-        }
-      }
-      this._goAirborne(); // ground fell away (lip, drop)
+      if (spd > 3) this.vel.multiplyScalar(1 + Math.min(POP_MAX, spd * 0.006));
+      this._goAirborne();
+    } else {
+      // pinned to the surface at any angle: drop onto it and cancel only the
+      // into-ground velocity so we slide along instead of digging in
+      this.pos.y = gy;
+      const vn = this.vel.dot(nA);
+      if (vn < 0) this.vel.addScaledVector(nA, -vn); // no bounce, just slide
+      this.grounded = true;
     }
 
     // boost pads: a hard shove down the pad's arrow
@@ -654,19 +647,27 @@ export class Player {
           this.sled.visible = true;
         }
 
-        // hug the surface: lift the rigid body above the highest ground under
-        // its footprint (uphill edge on a slope, the rising side of a concave
-        // transition) so the disc + rider never sink into the snow. keeps it
-        // clean on any angle without touching the point physics.
+        // seat the whole bottom flush on the slope: the body is already banked
+        // parallel to smoothNormal, so resting its centre at the ground height
+        // directly under it lays the entire base on the snow (no balancing on
+        // an uphill corner — that came from lifting to the highest footprint
+        // sample, which floated the downhill edge on every traverse). only a
+        // genuine bump that rises ABOVE the slope plane lifts the body, so the
+        // disc never clips into convex ground.
         const hdx = Math.sin(this.heading), hdz = Math.cos(this.heading);
         const fr = 0.55;
-        let hug = this.pos.y;
+        const gc = t.height(this.pos.x, this.pos.z);     // ground under the centre
+        const ny = Math.max(1e-3, this.smoothNormal.y);
+        const dHdx = -this.smoothNormal.x / ny, dHdz = -this.smoothNormal.z / ny;
+        let lift = 0;
         const samp = [[hdx, hdz], [-hdx, -hdz], [hdz, -hdx], [-hdz, hdx]];
         for (const [ox, oz] of samp) {
           const hh = t.height(this.pos.x + ox * fr, this.pos.z + oz * fr);
-          if (hh > hug) hug = hh;
+          const onPlane = gc + dHdx * (ox * fr) + dHdz * (oz * fr); // slope-plane height there
+          const bump = hh - onPlane;                     // how far ground rises off the plane
+          if (bump > lift) lift = bump;
         }
-        this.root.position.y = hug + (this.state === 'belly' ? BELLY_CLEAR : BODY_CLEAR) - this.visCushion;
+        this.root.position.y = gc + lift + (this.state === 'belly' ? BELLY_CLEAR : BODY_CLEAR) - this.visCushion;
       }
       this.root.quaternion.copy(this.visQuat);
       this.root.rotation.order = 'XYZ';
