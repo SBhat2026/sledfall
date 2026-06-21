@@ -222,9 +222,12 @@ export class Player {
     const steerIn = THREE.MathUtils.clamp(-steerRaw, -1, 1);
     const sp = this.planarSpeed();
 
-    // steering: stronger with speed (weight-shift, not car steering)
+    // steering: you keep real turn authority even crawling or stopped, so you
+    // can freely point the penguin anywhere and it HOLDS that heading (chill,
+    // open-world feel — not auto-snapped down the fall line). a little extra
+    // bite at speed for weight-shift carves.
     const speedFac = sp / (sp + 7);
-    const yawRate = steerIn * 2.2 * this.stats.steer * speedFac * (belly ? 0.85 : 1);
+    const yawRate = steerIn * (1.4 + 1.1 * speedFac) * this.stats.steer * (belly ? 0.85 : 1);
     this.heading += yawRate * dt;
     this.lean = THREE.MathUtils.lerp(this.lean, steerIn, 1 - Math.pow(0.001, dt));
 
@@ -655,7 +658,7 @@ export class Player {
         // genuine bump that rises ABOVE the slope plane lifts the body, so the
         // disc never clips into convex ground.
         const hdx = Math.sin(this.heading), hdz = Math.cos(this.heading);
-        const fr = 0.55;
+        const fr = 0.72; // covers the disc rim (r≈0.64) so it never clips convex ground
         const gc = t.height(this.pos.x, this.pos.z);     // ground under the centre
         const ny = Math.max(1e-3, this.smoothNormal.y);
         const dHdx = -this.smoothNormal.x / ny, dHdz = -this.smoothNormal.z / ny;

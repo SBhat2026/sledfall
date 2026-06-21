@@ -9,11 +9,12 @@ export class ChaseCam {
     this.camera = camera;
     this.terrain = terrain;
     this.input = input;
-    this.yaw = 0;        // mouse orbit offset
-    this.followYaw = 0;  // smoothed copy of the heading — only tracks while riding
+    this.yaw = 0;        // mouse orbit offset (persists — free look)
+    this.followYaw = 0;  // smoothed copy of the heading — gently trails travel
     this.pitch = 0.26;
     this.pos = new THREE.Vector3();
     this.look = new THREE.Vector3();
+    this.focus = new THREE.Vector3();  // heavily-smoothed body position the rig orbits
     this.first = true;
     this.shake = 0;
     this._tilt = 0;
@@ -26,26 +27,34 @@ export class ChaseCam {
 
   update(player, dt) {
     const [mdx, mdy] = this.input.takeMouse();
-    this.yaw -= mdx * 0.0024;
+    this.yaw -= mdx * 0.0024;          // free look — the orbit offset PERSISTS
     this.pitch = THREE.MathUtils.clamp(this.pitch + mdy * 0.0019, -0.15, 1.1);
-    // orbit eases back behind the sled while riding fast
     const sp = player.planarSpeed();
-    if (player.state === 'sled' && sp > 6) {
-      this.yaw *= Math.pow(0.45, dt);
-    }
 
-    // the camera frame follows the heading only while riding the ground —
-    // it holds a constant orientation during air spins and while walking,
-    // so the world doesn't whip around with the character
-    if (this.first) this.followYaw = player.heading;
-    if (player.state === 'sled') {
+    // the camera frame trails the direction of travel only GENTLY, and never
+    // while aiming or off the ground — so the view doesn't snap behind the fall
+    // line. combined with the persistent mouse offset above, you can point the
+    // penguin anywhere and freely look around; the camera won't fight you.
+    if (this.first) { this.followYaw = player.heading; this.focus.copy(player.pos); }
+    const grounded = player.state === 'sled' || player.state === 'belly';
+    if (grounded && this.aimTarget < 0.5) {
       let d = player.heading - this.followYaw;
       d = ((d + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
-      this.followYaw += d * (1 - Math.pow(0.002, dt));
+      this.followYaw += d * (1 - Math.pow(0.25, dt)); // slow, lazy trail
     }
 
     // ease toward / out of aim (over-the-shoulder)
     this.aim += (this.aimTarget - this.aim) * (1 - Math.pow(0.0006, dt));
+
+    // SMOOTHED FOCUS: the camera orbits this low-passed copy of the body, not
+    // the raw sled — so every mogul, lip and knock the sled takes is filtered
+    // out of the ride. vertical is smoothed hard (bump chatter lives there);
+    // horizontal a touch less so turns still feel responsive.
+    const fkXZ = 1 - Math.pow(0.0006, dt);
+    const fkY = 1 - Math.pow(0.04, dt);   // ~0.3s time-constant → kills bump jitter
+    this.focus.x += (player.pos.x - this.focus.x) * fkXZ;
+    this.focus.z += (player.pos.z - this.focus.z) * fkXZ;
+    this.focus.y += (player.pos.y - this.focus.y) * fkY;
 
     const walk = player.state === 'walk';
     const dist = THREE.MathUtils.lerp(walk ? 4.6 : 5.4 + Math.min(2.0, sp * 0.045), 2.5, this.aim);
@@ -53,9 +62,9 @@ export class ChaseCam {
     const worldYaw = this.followYaw + this.yaw + Math.PI; // behind the player
     this.input.camYaw = this.followYaw + this.yaw;        // walk-mode movement frame
 
-    const tx = player.pos.x + Math.sin(worldYaw) * Math.cos(this.pitch) * dist;
-    const tz = player.pos.z + Math.cos(worldYaw) * Math.cos(this.pitch) * dist;
-    let ty = player.pos.y + height + Math.sin(this.pitch) * dist;
+    const tx = this.focus.x + Math.sin(worldYaw) * Math.cos(this.pitch) * dist;
+    const tz = this.focus.z + Math.cos(worldYaw) * Math.cos(this.pitch) * dist;
+    let ty = this.focus.y + height + Math.sin(this.pitch) * dist;
 
     // keep the camera out of the snow
     const gy = this.terrain.height(tx, tz);
@@ -65,10 +74,10 @@ export class ChaseCam {
       this.pos.set(tx, ty, tz);
       this.first = false;
     } else {
-      // lag: camera "falls behind" on acceleration
-      const k = 1 - Math.pow(0.0001, dt);
+      // gentle spring toward the ideal seat (frame-rate independent)
+      const k = 1 - Math.pow(0.0015, dt);
       this.pos.x += (tx - this.pos.x) * k;
-      this.pos.y += (ty - this.pos.y) * k * 0.9;
+      this.pos.y += (ty - this.pos.y) * k;
       this.pos.z += (tz - this.pos.z) * k;
     }
 
@@ -76,18 +85,18 @@ export class ChaseCam {
     const fwd = sp > 2
       ? new THREE.Vector3(player.vel.x / sp, 0, player.vel.z / sp)
       : player.headingDir(new THREE.Vector3());
-    const lookT = new THREE.Vector3().copy(player.pos)
+    const lookT = new THREE.Vector3().copy(this.focus)
       .addScaledVector(fwd, Math.min(8, sp * 0.22))
       .add(new THREE.Vector3(0, 1.1, 0));
-    const lk = 1 - Math.pow(0.00004, dt);
+    const lk = 1 - Math.pow(0.0008, dt);
     this.look.lerp(lookT, this.first ? 1 : lk);
 
-    // shake: terrain chatter at speed + crash/landing impulses
+    // shake: crash/landing impulses only (no constant speed chatter — the ride
+    // is meant to feel smooth even when the sled is bouncing over rough snow)
     this.shake = Math.max(0, this.shake - dt * 2.2);
-    const chatter = (player.state === 'sled' ? Math.min(1, sp / 34) * 0.028 : 0) + this.shake * 0.35;
     const t = performance.now() * 0.001;
-    const ox = (Math.sin(t * 37.7) + Math.sin(t * 23.3)) * chatter;
-    const oy = (Math.sin(t * 41.1) + Math.sin(t * 29.9)) * chatter;
+    const ox = (Math.sin(t * 41.1) + Math.sin(t * 29.9)) * this.shake * 0.3;
+    const oy = (Math.sin(t * 37.7) + Math.sin(t * 23.3)) * this.shake * 0.3;
 
     this.camera.position.copy(this.pos).add(new THREE.Vector3(ox, oy, 0));
     // over-the-shoulder: shift to the right so the rider sits left-of-frame

@@ -261,14 +261,15 @@ export class PenguinRig {
     this._setW('Spine', 0.12 + speedT * 0.2, 0, -lean * 0.35);
     this._setW('Chest', 0.06, 0, -lean * 0.12);
     this._setW('Head', -0.15 - speedT * 0.15, lean * 0.25, 0);
-    // flippers: from T-pose down to the rim, flare with lean
-    this._setW('UpperArmL', 0, 0, -1.05 + lean * 0.2);
-    this._setW('UpperArmR', 0, 0, 1.05 + lean * 0.2);
-    // legs: thighs swing forward over the rim, feet up
-    this._setW('UpperLegL', 1.25, 0.12, 0);
-    this._setW('UpperLegR', 1.25, -0.12, 0);
-    this._setW('LowerLegL', -0.2, 0, 0);
-    this._setW('LowerLegR', -0.2, 0, 0);
+    // flippers: swing down AND forward to grip the rim, held clear of the body
+    // (a little out on the +z/-z so they don't sink into the round belly)
+    this._setW('UpperArmL', 0.55, -0.35, -0.92 + lean * 0.2);
+    this._setW('UpperArmR', 0.55, 0.35, 0.92 + lean * 0.2);
+    // legs: thighs swing forward over the rim, knees together, feet up
+    this._setW('UpperLegL', 1.3, 0.18, 0);
+    this._setW('UpperLegR', 1.3, -0.18, 0);
+    this._setW('LowerLegL', -0.35, -0.1, 0);
+    this._setW('LowerLegR', -0.35, 0.1, 0);
     // chatter bob
     this.group.position.y = Math.sin(t * 23) * 0.012 * speedT;
   }
